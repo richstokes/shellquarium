@@ -183,6 +183,56 @@ func inBounds(x, y int) bool {
 	return x >= 0 && x < tankW && y >= 0 && y < tankH
 }
 
+// Raw terminal mode for reading keypresses
+var origTermios syscall.Termios
+
+func enableRawMode() {
+	_, _, errno := syscall.Syscall6(
+		syscall.SYS_IOCTL,
+		uintptr(syscall.Stdin),
+		uintptr(syscall.TIOCGETA),
+		uintptr(unsafe.Pointer(&origTermios)),
+		0, 0, 0,
+	)
+	if errno != 0 {
+		return
+	}
+	raw := origTermios
+	raw.Lflag &^= syscall.ECHO | syscall.ICANON
+	raw.Cc[syscall.VMIN] = 1
+	raw.Cc[syscall.VTIME] = 0
+	syscall.Syscall6(
+		syscall.SYS_IOCTL,
+		uintptr(syscall.Stdin),
+		uintptr(syscall.TIOCSETA),
+		uintptr(unsafe.Pointer(&raw)),
+		0, 0, 0,
+	)
+}
+
+func disableRawMode() {
+	syscall.Syscall6(
+		syscall.SYS_IOCTL,
+		uintptr(syscall.Stdin),
+		uintptr(syscall.TIOCSETA),
+		uintptr(unsafe.Pointer(&origTermios)),
+		0, 0, 0,
+	)
+}
+
+func readKeys(ch chan<- byte) {
+	buf := make([]byte, 1)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if n > 0 {
+			ch <- buf[0]
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Spawning helpers
 // ---------------------------------------------------------------------------
@@ -423,7 +473,7 @@ func render(buf *strings.Builder, grid [][]cell, fishes []Fish, bubbles []Bubble
 	// Plants with sway animation
 	for _, p := range plants {
 		for dy, line := range p.Art {
-			y := tankH - 3 - len(p.Art) + dy
+			y := tankH - 2 - len(p.Art) + dy
 			sway := 0
 			if (tick/6+dy)%4 < 2 {
 				sway = 1
@@ -537,8 +587,14 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGWINCH)
 
+	enableRawMode()
+	defer disableRawMode()
+
 	fmt.Print(HideCur + ClearScr)
 	defer fmt.Print(ShowCur + Reset + ClearScr)
+
+	keyChan := make(chan byte, 10)
+	go readKeys(keyChan)
 
 	fishes := spawnFish(12 + rand.Intn(6))
 	bubbles := make([]Bubble, 0, 30)
@@ -574,6 +630,22 @@ func main() {
 				continue
 			}
 			return
+
+		case key := <-keyChan:
+			if key == 'r' || key == 'R' {
+				fishes = spawnFish(12 + rand.Intn(6))
+				bubbles = bubbles[:0]
+				plants = generatePlants()
+				rocks = generateRocks()
+				corals = generateCoral()
+				stars = generateStarfish()
+				crabs = spawnCrabs()
+				chestX = tankW/4 + rand.Intn(tankW/3)
+				tick = 0
+				fmt.Print(ClearScr)
+			} else if key == 'q' || key == 'Q' || key == 3 { // 3 = Ctrl+C
+				return
+			}
 
 		case <-ticker.C:
 			tick++

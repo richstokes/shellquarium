@@ -34,7 +34,10 @@ Or run directly:
 go run .
 ```
 
-Press **Ctrl+C** to exit.
+## Controls
+
+- **R** — randomize/reload the scene
+- **Q** or **Ctrl+C** — exit
 
 ## Requirements
 
