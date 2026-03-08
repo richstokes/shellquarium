@@ -182,17 +182,23 @@ func getTerminalSize() (int, int) {
 
 var origStty string
 
+func sttyExec(args ...string) ([]byte, error) {
+	cmd := exec.Command("stty", args...)
+	cmd.Stdin = os.Stdin
+	return cmd.Output()
+}
+
 func enableRawMode() {
-	out, err := exec.Command("stty", "-g").Output()
+	out, err := sttyExec("-g")
 	if err == nil {
 		origStty = strings.TrimSpace(string(out))
 	}
-	exec.Command("stty", "-echo", "-icanon", "min", "1", "time", "0").Run()
+	sttyExec("-echo", "-icanon", "min", "1", "time", "0")
 }
 
 func disableRawMode() {
 	if origStty != "" {
-		exec.Command("stty", origStty).Run()
+		sttyExec(origStty)
 	}
 }
 
