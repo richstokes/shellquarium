@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 // ANSI escape codes
@@ -162,6 +164,37 @@ var tankW, tankH int
 // ---------------------------------------------------------------------------
 // Terminal helpers
 // ---------------------------------------------------------------------------
+
+func getTerminalSize() (int, int) {
+	type winsize struct{ Row, Col, Xpx, Ypx uint16 }
+	ws := &winsize{}
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_IOCTL,
+		uintptr(syscall.Stdout),
+		uintptr(syscall.TIOCGWINSZ),
+		uintptr(unsafe.Pointer(ws)),
+	)
+	if errno == 0 && ws.Col > 0 && ws.Row > 0 {
+		return int(ws.Col), int(ws.Row)
+	}
+	return 80, 24
+}
+
+var origStty string
+
+func enableRawMode() {
+	out, err := exec.Command("stty", "-g").Output()
+	if err == nil {
+		origStty = strings.TrimSpace(string(out))
+	}
+	exec.Command("stty", "-echo", "-icanon", "min", "1", "time", "0").Run()
+}
+
+func disableRawMode() {
+	if origStty != "" {
+		exec.Command("stty", origStty).Run()
+	}
+}
 
 func inBounds(x, y int) bool {
 	return x >= 0 && x < tankW && y >= 0 && y < tankH
