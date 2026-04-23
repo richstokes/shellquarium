@@ -34,7 +34,7 @@ const (
 	BrCyan    = ESC + "96m"
 
 	WaterBg   = ESC + "48;5;18m"
-	SandBg    = ESC + "48;5;94m"  // sand background
+	SandBg    = ESC + "48;5;94m" // sand background
 	SandFg    = ESC + "38;5;180m"
 	SandFg2   = ESC + "38;5;186m" // lighter sand highlight
 	DarkSand  = ESC + "38;5;137m"
@@ -50,7 +50,7 @@ const (
 	CoralPink = ESC + "38;5;204m"
 	CoralOrg  = ESC + "38;5;209m"
 	CoralRed  = ESC + "38;5;196m"
-	Plankton  = ESC + "38;5;60m"  // dim floating particle
+	Plankton  = ESC + "38;5;60m" // dim floating particle
 )
 
 // Direction a fish or crab faces
@@ -109,11 +109,12 @@ var fishSpecies = []FishSpecies{
 
 // Fish is a live fish swimming in the tank
 type Fish struct {
-	X, Y      int
-	Species   *FishSpecies
-	Dir       Direction
-	Speed     int
-	TickCount int
+	X, Y              int
+	Species           *FishSpecies
+	Dir               Direction
+	Speed             int
+	TickCount         int
+	CollisionCooldown int
 }
 
 // Bubble floats upward
@@ -128,7 +129,7 @@ type Crab struct {
 }
 
 var crabRight = []string{"V(°°)V", "v(°°)v"}
-var crabLeft  = []string{"V(°°)V", "v(°°)v"}
+var crabLeft = []string{"V(°°)V", "v(°°)v"}
 
 // Starfish sits on the sand
 type Starfish struct{ X, Y int }
@@ -160,6 +161,11 @@ type cell struct {
 }
 
 var tankW, tankH int
+
+const (
+	fishCollisionTurnChance = 3
+	fishCollisionCooldown   = 8
+)
 
 // ---------------------------------------------------------------------------
 // Terminal helpers
@@ -346,6 +352,89 @@ func moveFish(f *Fish) {
 	}
 }
 
+func fishArt(f *Fish) []string {
+	if f.Dir == Left {
+		return f.Species.Left
+	}
+	return f.Species.Right
+}
+
+func fishBounds(f *Fish) (minX, minY, maxX, maxY int, ok bool) {
+	art := fishArt(f)
+	minX, minY = tankW, tankH
+	maxX, maxY = -1, -1
+	for dy, line := range art {
+		for dx, ch := range line {
+			if ch == ' ' {
+				continue
+			}
+			x := f.X + dx
+			y := f.Y + dy
+			if x < minX {
+				minX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if x > maxX {
+				maxX = x
+			}
+			if y > maxY {
+				maxY = y
+			}
+		}
+	}
+	return minX, minY, maxX, maxY, maxX >= minX && maxY >= minY
+}
+
+func fishCollide(a, b *Fish) bool {
+	aMinX, aMinY, aMaxX, aMaxY, aOK := fishBounds(a)
+	bMinX, bMinY, bMaxX, bMaxY, bOK := fishBounds(b)
+	if !aOK || !bOK {
+		return false
+	}
+	return aMinX <= bMaxX && aMaxX >= bMinX && aMinY <= bMaxY && aMaxY >= bMinY
+}
+
+func reverseDirection(d Direction) Direction {
+	if d == Right {
+		return Left
+	}
+	return Right
+}
+
+func handleFishCollisions(fishes []Fish) {
+	for i := range fishes {
+		if fishes[i].CollisionCooldown > 0 {
+			fishes[i].CollisionCooldown--
+		}
+	}
+
+	for i := 0; i < len(fishes); i++ {
+		for j := i + 1; j < len(fishes); j++ {
+			if fishes[i].CollisionCooldown > 0 || fishes[j].CollisionCooldown > 0 {
+				continue
+			}
+			if !fishCollide(&fishes[i], &fishes[j]) || rand.Intn(fishCollisionTurnChance) != 0 {
+				continue
+			}
+
+			fishes[i].Dir = reverseDirection(fishes[i].Dir)
+			fishes[j].Dir = reverseDirection(fishes[j].Dir)
+			fishes[i].CollisionCooldown = fishCollisionCooldown
+			fishes[j].CollisionCooldown = fishCollisionCooldown
+
+			if fishes[i].X <= fishes[j].X {
+				fishes[i].X--
+				fishes[j].X++
+			} else {
+				fishes[i].X++
+				fishes[j].X--
+			}
+		}
+	}
+}
+
 func clamp(v, lo, hi int) int {
 	if lo > hi {
 		lo = hi
@@ -437,7 +526,7 @@ func render(buf *strings.Builder, grid [][]cell, fishes []Fish, bubbles []Bubble
 
 	// Rocks
 	for _, r := range rocks {
-	drawSprite(grid, r.X, tankH-3-len(r.Art)+1, r.Art, StoneFg, false)
+		drawSprite(grid, r.X, tankH-3-len(r.Art)+1, r.Art, StoneFg, false)
 	}
 
 	// Treasure chest
@@ -500,11 +589,7 @@ func render(buf *strings.Builder, grid [][]cell, fishes []Fish, bubbles []Bubble
 
 	// Fish
 	for _, f := range fishes {
-		art := f.Species.Right
-		if f.Dir == Left {
-			art = f.Species.Left
-		}
-		drawSprite(grid, f.X, f.Y, art, f.Species.Color, true)
+		drawSprite(grid, f.X, f.Y, fishArt(&f), f.Species.Color, true)
 	}
 
 	// Ambient particles / plankton
@@ -520,7 +605,6 @@ func render(buf *strings.Builder, grid [][]cell, fishes []Fish, bubbles []Bubble
 			}
 		}
 	}
-
 
 	// Bubbles (topmost layer)
 	for _, b := range bubbles {
@@ -644,6 +728,7 @@ func main() {
 					moveFish(&fishes[i])
 				}
 			}
+			handleFishCollisions(fishes)
 
 			// Move crabs
 			for i := range crabs {
@@ -670,7 +755,7 @@ func main() {
 					if rand.Intn(8) == 0 {
 						bx := f.X
 						if f.Dir == Right {
-							bx += len(f.Species.Right[0])
+							bx += len(fishArt(&f)[0])
 						}
 						bubbles = append(bubbles, Bubble{X: bx, Y: f.Y})
 					}
